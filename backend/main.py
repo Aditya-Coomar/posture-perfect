@@ -10,7 +10,7 @@ import jwt
 from jwt import PyJWTError
 import bcrypt
 from database.main import Database
-from schema.main import TokenData, UserAuth
+from schema.main import TokenData, UserRegister, UserLogin
 from template.mail.main import MAIL_TEMPLATE
 from config.mail.main import MAIL_SERVER
 import os
@@ -84,7 +84,7 @@ async def check_connection():
     
 
 @app.post("/api/auth/register")
-async def register_user(user: UserAuth):
+async def register_user(user: UserRegister):
     try:
         if user.email is None or user.username is None or user.password is None:
             return JSONResponse(content={"message": "Please provide all required fields", "status": "error"}, status_code=400)
@@ -112,3 +112,35 @@ async def register_user(user: UserAuth):
             return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
     except Exception as e:
         return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
+    
+    
+
+@app.post("/api/auth/login")
+async def login_user(user: UserLogin):
+    try:
+        if user.email is None or user.password is None:
+            return JSONResponse(content={"message": "Please provide all required fields", "status": "error"}, status_code=400)
+        user_data = {
+            "email": str(user.email),
+            "password": str(user.password)
+        }
+        get_user = (db.db.table("auth-users")
+                    .select("*")
+                    .eq("email", user_data["email"])
+                    .execute())
+        if not get_user.data:
+            return JSONResponse(content={"message": "User does not exist", "status": "error"}, status_code=400)
+        
+        get_user = get_user.data[0]
+        if bcrypt.checkpw(user_data["password"].encode("utf-8"), get_user["password"].encode("utf-8")):
+            access_token_expires = timedelta(minutes=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES")))
+            access_token = generate_access_token(data={"sub": get_user["id"]}, expires_delta=access_token_expires)
+            return JSONResponse(content={"access_token": access_token, "status" : "success"}, status_code=200)
+        else:
+            return JSONResponse(content={"message": "Invalid credentials", "status": "error"}, status_code=400)
+    except Exception as e:
+        return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
+    
+
+
+
