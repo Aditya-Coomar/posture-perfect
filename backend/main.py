@@ -81,7 +81,7 @@ def generate_access_token(data: Dict, expires_delta: Optional[timedelta] = None)
 @app.get("/api/check/connection")
 async def check_connection():
     try:
-        connection = db.check_connection()
+        db.check_connection()
         return JSONResponse(content={"message": "successfully connected", "status": "success"}, status_code=200)
     except Exception as e:
         return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
@@ -146,6 +146,7 @@ async def login_user(user: UserLogin):
         return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
     
 
+
 @app.post("/api/auth/personalize")
 async def personalize_user_profile(user: UserProfile, token: str = Depends(OAuth2PasswordBearer(tokenUrl="api/auth/login"))):
     try:
@@ -190,6 +191,7 @@ async def personalize_user_profile(user: UserProfile, token: str = Depends(OAuth
     except Exception as e:
         return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
     
+
 
 @app.get("/api/auth/workout/recommendation")
 async def get_workout_recommendation(token: str = Depends(OAuth2PasswordBearer(tokenUrl="api/auth/login"))):
@@ -253,6 +255,7 @@ async def get_workout_recommendation(token: str = Depends(OAuth2PasswordBearer(t
         return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
     
 
+
 @app.get("/api/auth/user/profile")
 async def get_user_profile(token: str = Depends(OAuth2PasswordBearer(tokenUrl="api/auth/login"))):
     try:
@@ -268,6 +271,7 @@ async def get_user_profile(token: str = Depends(OAuth2PasswordBearer(tokenUrl="a
     except Exception as e:
         return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
     
+
 
 @app.get("/api/auth/user/workout/profile")
 async def get_user_profile(token: str = Depends(OAuth2PasswordBearer(tokenUrl="api/auth/login"))):
@@ -290,6 +294,7 @@ async def get_user_profile(token: str = Depends(OAuth2PasswordBearer(tokenUrl="a
         return JSONResponse(content={"message": "User profile fetched successfully", "data": user_profile, "status": "success"}, status_code=200)
     except Exception as e:
         return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
+
 
 
 @app.patch("/api/auth/profile/update")
