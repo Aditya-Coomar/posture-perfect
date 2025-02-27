@@ -10,7 +10,7 @@ import jwt
 from jwt import PyJWTError
 import bcrypt
 from database.main import Database
-from schema.main import TokenData, UserRegister, UserLogin, UserProfile
+from schema.main import TokenData, UserRegister, UserLogin, UserProfile, UserUpdateProfile
 from template.mail.main import MAIL_TEMPLATE
 from config.mail.main import MAIL_SERVER
 from config.bot.main import GROQ_SERVER
@@ -18,9 +18,9 @@ from utils.main import Utils
 import os
 from dotenv import load_dotenv
 from bson import ObjectId
-import random
+import json
 from fastapi.middleware.cors import CORSMiddleware
-import uuid
+
 
 
 load_dotenv()
@@ -102,7 +102,7 @@ async def register_user(user: UserRegister):
                     .select("email")
                     .eq("email", user_data["email"])
                     .execute())
-        if get_user.data[0]:
+        if get_user.data:
             return JSONResponse(content={"message": "User already exists", "status": "error"}, status_code=400)
         try:
             response = (db.db.table("auth-users")
@@ -139,7 +139,7 @@ async def login_user(user: UserLogin):
         if bcrypt.checkpw(user_data["password"].encode("utf-8"), get_user["password"].encode("utf-8")):
             access_token_expires = timedelta(minutes=int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES")))
             access_token = generate_access_token(data={"sub": get_user["id"]}, expires_delta=access_token_expires)
-            return JSONResponse(content={"access_token": access_token, "status" : "success"}, status_code=200)
+            return JSONResponse(content={"message": "User Loginned successfully", "data": access_token, "status" : "success"}, status_code=200)
         else:
             return JSONResponse(content={"message": "Invalid credentials", "status": "error"}, status_code=400)
     except Exception as e:
@@ -210,7 +210,8 @@ async def get_workout_recommendation(token: str = Depends(OAuth2PasswordBearer(t
         if not search_user.data[0]:
             return JSONResponse(content={"message": "User profile does not exist", "status": "error"}, status_code=400)
         user_data = search_user.data[0]
-        user_age = utility.calculate_age(user_data["date_of_birth"])
+        dob = user_data['date_of_birth']
+        user_age = utility.calculate_age(dob)
         query = f'''
         A few questions were asked to personalize your workout recommendation. Here are the details:
         1. User Gender: {user_data["your_gender"]}
@@ -229,8 +230,95 @@ async def get_workout_recommendation(token: str = Depends(OAuth2PasswordBearer(t
         2. Pushups should user do in a day?
         3. Squats should user do in a day?
         4. Crunches should user do in a day?
+        
+        Use the below format for response:
+        {'{ "exercise_name": "name of the exercise", "exercise_reps": "number of reps", "exercise_sets": "number of sets", "duration": "duration of the exercise", "day": "day(s) of the week this exercise should be done"}'} 
+        Give in an array format for each exercise. Only the exercises and no other details.
         '''
         response = await groq.ask(query)
-        return JSONResponse(content={"message": f"{str(response)}", "status": "success"}, status_code=200)
+        try :
+            exercise_list = json.loads(response)
+            add_exercise = (db.db.table("user-profile")
+                            .update({"recommended_exercise_plan": exercise_list})
+                            .eq("email", get_user_email)
+                            .execute())
+            if add_exercise.data[0]['recommended_exercise_plan']:
+                return JSONResponse(content={"message": "Recommendation plan fetched successfully", "data": exercise_list, "status": "success"}, status_code=200)
+            else:
+                return JSONResponse(content={"message": "Failed to get workout recommendation", "status": "error"}, status_code=500)
+        except Exception as e:
+            return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
     except Exception as e:
         return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
+    
+
+@app.get("/api/auth/user/profile")
+async def get_user_profile(token: str = Depends(OAuth2PasswordBearer(tokenUrl="api/auth/login"))):
+    try:
+        token_data = get_current_user(token)
+        get_user = (db.db.table("auth-users")
+                    .select("email", "username", "created_at")
+                    .eq("id", token_data.username)
+                    .execute())
+        if not get_user.data[0]:
+            return JSONResponse(content={"message": "User does not exist", "status": "error"}, status_code=400)
+        get_user_data = get_user.data[0]
+        return JSONResponse(content={"message": "User profile fetched successfully", "data": get_user_data, "status": "success"}, status_code=200)
+    except Exception as e:
+        return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
+    
+
+@app.get("/api/auth/user/workout/profile")
+async def get_user_profile(token: str = Depends(OAuth2PasswordBearer(tokenUrl="api/auth/login"))):
+    try:
+        token_data = get_current_user(token)
+        get_user = (db.db.table("auth-users")
+                    .select("email")
+                    .eq("id", token_data.username)
+                    .execute())
+        if not get_user.data[0]:
+            return JSONResponse(content={"message": "User does not exist", "status": "error"}, status_code=400)
+        get_user_email = get_user.data[0]["email"]
+        profile_response = (db.db.table("user-profile")
+                            .select("*")
+                            .eq("email", get_user_email)
+                            .execute())
+        if not profile_response.data[0]:
+            return JSONResponse(content={"message": "User profile does not exist", "status": "error"}, status_code=400)
+        user_profile = profile_response.data[0]
+        return JSONResponse(content={"message": "User profile fetched successfully", "data": user_profile, "status": "success"}, status_code=200)
+    except Exception as e:
+        return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
+
+@app.patch("/api/auth/profile/update")
+async def update_user_profile(user: UserUpdateProfile, token: str = Depends(OAuth2PasswordBearer(tokenUrl="api/auth/login"))):
+    try:
+        token_data = get_current_user(token)
+        get_user = (db.db.table("auth-users")
+                    .select("email")
+                    .eq("id", token_data.username)
+                    .execute())
+        if not get_user.data[0]:
+            return JSONResponse(content={"message": "User does not exist", "status": "error"}, status_code=400)
+        get_user_email = get_user.data[0]["email"]
+        profile_response = (db.db.table("user-profile")
+                            .select("*")
+                            .eq("email", get_user_email)
+                            .execute())
+        if not profile_response.data[0]:
+            return JSONResponse(content={"message": "User profile does not exist", "status": "error"}, status_code=400)
+        user_data = user.model_dump()
+        updated_data = { k: v for k, v in user_data.items() if v is not None }
+        update_profile = (db.db.table("user-profile")
+                        .update(updated_data)
+                        .eq("email", get_user_email)
+                        .execute())
+        if update_profile.data[0]:
+            return JSONResponse(content={"message": "User profile updated successfully", "data" : update_profile.data[0], "status": "success"}, status_code=200)
+        else:
+            return JSONResponse(content={"message": "Failed to update user profile", "status": "error"}, status_code=500)
+            
+        
+    except Exception as e:
+        return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
+    
