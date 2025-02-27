@@ -82,7 +82,7 @@ def generate_access_token(data: Dict, expires_delta: Optional[timedelta] = None)
 async def check_connection():
     try:
         connection = db.check_connection()
-        return JSONResponse(content={"message": f"Connection Established to {connection}", "status": "success"}, status_code=200)
+        return JSONResponse(content={"message": "successfully connected", "status": "success"}, status_code=200)
     except Exception as e:
         return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
     
@@ -232,7 +232,8 @@ async def get_workout_recommendation(token: str = Depends(OAuth2PasswordBearer(t
         4. Crunches should user do in a day?
         
         Use the below format for response:
-        {'{ "exercise_name": "name of the exercise", "exercise_reps": "number of reps", "exercise_sets": "number of sets", "duration": "duration of the exercise", "day": "day(s) of the week this exercise should be done"}'} 
+        {'{ "exercise_name": "name of the exercise", "exercise_reps": "number of reps", "exercise_sets": "number of sets", "duration": "duration of the exercise", "day": "day(s) of the week this exercise should be done"}'}
+        Make sure that the total workout duration for all exercises combined is equal to the user's preferred workout duration and add suitable unit to it. 
         Give in an array format for each exercise. Only the exercises and no other details.
         '''
         response = await groq.ask(query)
@@ -290,6 +291,7 @@ async def get_user_profile(token: str = Depends(OAuth2PasswordBearer(tokenUrl="a
     except Exception as e:
         return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
 
+
 @app.patch("/api/auth/profile/update")
 async def update_user_profile(user: UserUpdateProfile, token: str = Depends(OAuth2PasswordBearer(tokenUrl="api/auth/login"))):
     try:
@@ -317,7 +319,6 @@ async def update_user_profile(user: UserUpdateProfile, token: str = Depends(OAut
             return JSONResponse(content={"message": "User profile updated successfully", "data" : update_profile.data[0], "status": "success"}, status_code=200)
         else:
             return JSONResponse(content={"message": "Failed to update user profile", "status": "error"}, status_code=500)
-            
         
     except Exception as e:
         return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
