@@ -10,7 +10,7 @@ import jwt
 from jwt import PyJWTError
 import bcrypt
 from database.main import Database
-from schema.main import TokenData, UserRegister, UserLogin, UserProfile, UserUpdateProfile
+from schema.main import TokenData, UserRegister, UserLogin, UserProfile, UserUpdateProfile, LeaderboardEntry
 from template.mail.main import MAIL_TEMPLATE
 from config.mail.main import MAIL_SERVER
 from config.bot.main import GROQ_SERVER
@@ -152,18 +152,18 @@ async def personalize_user_profile(user: UserProfile, token: str = Depends(OAuth
     try:
         token_data = get_current_user(token)
         get_user = (db.db.table("auth-users")
-                    .select("email")
+                    .select("email", "username")
                     .eq("id", token_data.username)
                     .execute())
-        if not get_user.data[0]:
+        if not get_user.data:
             return JSONResponse(content={"message": "User does not exist", "status": "error"}, status_code=400)
         get_user_email = get_user.data[0]["email"]
-        
+        get_username = get_user.data[0]["username"]
         search_user = (db.db.table("user-profile")
                           .select("email")
                             .eq("email", get_user_email)
                             .execute())
-        if search_user.data[0]:
+        if search_user.data and search_user.data[0]:
             return JSONResponse(content={"message": "User profile already exists", "status": "error"}, status_code=400)
         user_data = {
             "your_gender": user.your_gender,
@@ -182,7 +182,15 @@ async def personalize_user_profile(user: UserProfile, token: str = Depends(OAuth
             response = (db.db.table("user-profile")
                         .insert(user_data)
                         .execute())
-            if response:
+            leaderboard = (db.db.table("leaderboard")
+                           .insert({"email": get_user_email,
+                                    "username": get_username,
+                                    "total_points": 0, 
+                                    "today_points": 0, 
+                                    "created_on": datetime.now().strftime("%Y-%m-%d"), 
+                                    "last_updated": datetime.now().strftime("%Y-%m-%d")})
+                           .execute())
+            if response.data and leaderboard.data and response.data[0] and leaderboard.data[0]:
                 return JSONResponse(content={"message": "User profile added successfully", "status": "success"}, status_code=201)
             else:
                 return JSONResponse(content={"message": "Failed to personalize user profile", "status": "error"}, status_code=500)
@@ -264,9 +272,15 @@ async def get_user_profile(token: str = Depends(OAuth2PasswordBearer(tokenUrl="a
                     .select("email", "username", "created_at")
                     .eq("id", token_data.username)
                     .execute())
-        if not get_user.data[0]:
+        if not get_user.data:
             return JSONResponse(content={"message": "User does not exist", "status": "error"}, status_code=400)
         get_user_data = get_user.data[0]
+        get_leaderboard = (db.db.table("leaderboard")
+                           .select("total_points", "today_points")
+                           .eq("email", get_user_data["email"])
+                           .execute())
+        get_user_data["total_points"] = get_leaderboard.data and get_leaderboard.data[0]["total_points"]
+        get_user_data["today_points"] = get_leaderboard.data and get_leaderboard.data[0]["today_points"]
         return JSONResponse(content={"message": "User profile fetched successfully", "data": get_user_data, "status": "success"}, status_code=200)
     except Exception as e:
         return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
@@ -327,4 +341,62 @@ async def update_user_profile(user: UserUpdateProfile, token: str = Depends(OAut
         
     except Exception as e:
         return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
-    
+
+
+
+@app.get("/api/auth/leaderboard")
+async def get_leaderboard(token: str = Depends(OAuth2PasswordBearer(tokenUrl="api/auth/login"))):
+    try:
+        overall_leaderboard = (db.db.table("leaderboard")
+                               .select("username", "total_points")
+                               .order("total_points")
+                               .execute())
+        today = datetime.now().strftime("%Y-%m-%d")
+        today_leaderboard = (db.db.table("leaderboard")
+                             .select("username", "today_points")
+                             .eq("last_updated", today)
+                             .order("today_points")
+                             .execute())
+        if overall_leaderboard.data and today_leaderboard.data:
+            return JSONResponse(content={"message": "Leaderboard fetched successfully", "data" : {"overall_leaderboard" : overall_leaderboard.data, "today_leaderboard" : today_leaderboard.data } , "status": "success"}, status_code=200)
+        else:
+            return JSONResponse(content={"message": "Failed to fetch leaderboard", "status": "error"}, status_code=500)
+    except Exception as e:
+        return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
+
+@app.patch("/api/auth/leaderboard/update")
+async def update_leaderboard_entry(leaderboard: LeaderboardEntry, token: str = Depends(OAuth2PasswordBearer(tokenUrl="api/auth/login"))):
+    try:
+        token_data = get_current_user(token)
+        get_user = (db.db.table("auth-users")
+                    .select("email", "username")
+                    .eq("id", token_data.username)
+                    .execute())
+        if not get_user.data[0]:
+            return JSONResponse(content={"message": "User does not exist", "status": "error"}, status_code=400)
+        get_user_email = get_user.data[0]["email"]
+        get_current_leaderboard = (db.db.table("leaderboard")
+                                   .select("*")
+                                   .eq("email", get_user.data[0]["email"])
+                                    .execute())
+        if not get_current_leaderboard.data and not get_current_leaderboard.data[0]:
+            return JSONResponse(content={"message": "Leaderboard entry does not exist", "status": "error"}, status_code=400)
+        
+        today = datetime.now().strftime("%Y-%m-%d")
+        if get_current_leaderboard.data[0]["last_updated"] == today:
+            update_leaderboard = (db.db.table("leaderboard")
+                                  .update({"today_points": get_current_leaderboard.data[0]["today_points"] + leaderboard.score, "total_points": get_current_leaderboard.data[0]["total_points"] + leaderboard.score})
+                                  .eq("email", get_user_email)
+                                  .execute())
+        else:
+            update_leaderboard = (db.db.table("leaderboard")
+                                  .update({"today_points": leaderboard.score, "total_points": get_current_leaderboard.data[0]["total_points"] + leaderboard.score, "last_updated": today})
+                                  .eq("email", get_user_email)
+                                  .execute())
+
+        if update_leaderboard.data and update_leaderboard.data[0]:
+            return JSONResponse(content={"message": "Leaderboard updated successfully", "data" : update_leaderboard.data[0], "status": "success"}, status_code=200)
+        else:
+            return JSONResponse(content={"message": "Failed to update leaderboard", "status": "error"}, status_code=500)
+    except Exception as e:
+        return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)

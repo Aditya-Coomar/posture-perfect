@@ -36,3 +36,8 @@ class UserUpdateProfile(BaseModel):
     workout_duration: Optional[str] = Field(None, example="30 minutes")
     what_days_a_week_you_will_workout: Optional[str] = Field(None, example="Monday, Wednesday, Friday")
     what_time_of_day_you_will_workout: Optional[str] = Field(None, example="Morning")
+
+
+class LeaderboardEntry(BaseModel):
+    date: str = Field(..., example="2021-01-01")
+    score: int = Field(..., example=100)
