@@ -10,9 +10,11 @@ import jwt
 from jwt import PyJWTError
 import bcrypt
 from database.main import Database
-from schema.main import TokenData, UserRegister, UserLogin
+from schema.main import TokenData, UserRegister, UserLogin, UserProfile
 from template.mail.main import MAIL_TEMPLATE
 from config.mail.main import MAIL_SERVER
+from config.bot.main import GROQ_SERVER
+from utils.main import Utils
 import os
 from dotenv import load_dotenv
 from bson import ObjectId
@@ -26,6 +28,8 @@ app = FastAPI()
 db = Database()
 mail = MAIL_SERVER()
 mail_template = MAIL_TEMPLATE()
+groq = GROQ_SERVER()
+utility = Utils()
 
 origins = ["*"]
 
@@ -98,7 +102,7 @@ async def register_user(user: UserRegister):
                     .select("email")
                     .eq("email", user_data["email"])
                     .execute())
-        if get_user:
+        if get_user.data[0]:
             return JSONResponse(content={"message": "User already exists", "status": "error"}, status_code=400)
         try:
             response = (db.db.table("auth-users")
@@ -142,5 +146,91 @@ async def login_user(user: UserLogin):
         return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
     
 
+@app.post("/api/auth/personalize")
+async def personalize_user_profile(user: UserProfile, token: str = Depends(OAuth2PasswordBearer(tokenUrl="api/auth/login"))):
+    try:
+        token_data = get_current_user(token)
+        get_user = (db.db.table("auth-users")
+                    .select("email")
+                    .eq("id", token_data.username)
+                    .execute())
+        if not get_user.data[0]:
+            return JSONResponse(content={"message": "User does not exist", "status": "error"}, status_code=400)
+        get_user_email = get_user.data[0]["email"]
+        
+        search_user = (db.db.table("user-profile")
+                          .select("email")
+                            .eq("email", get_user_email)
+                            .execute())
+        if search_user.data[0]:
+            return JSONResponse(content={"message": "User profile already exists", "status": "error"}, status_code=400)
+        user_data = {
+            "your_gender": user.your_gender,
+            "weight": user.weight,
+            "height": user.height,
+            "date_of_birth": user.date_of_birth,
+            "primary_goal_for_exercising": user.primary_goal_for_exercising,
+            "how_often_exercised_at_past": user.how_often_exercised_at_past,
+            "workout_intensity": user.workout_intensity,
+            "workout_duration": user.workout_duration,
+            "what_days_a_week_you_will_workout": user.what_days_a_week_you_will_workout,
+            "what_time_of_day_you_will_workout": user.what_time_of_day_you_will_workout,
+            "email": get_user_email
+        }
+        try:
+            response = (db.db.table("user-profile")
+                        .insert(user_data)
+                        .execute())
+            if response:
+                return JSONResponse(content={"message": "User profile added successfully", "status": "success"}, status_code=201)
+            else:
+                return JSONResponse(content={"message": "Failed to personalize user profile", "status": "error"}, status_code=500)
+        except Exception as e:
+            return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
+    except Exception as e:
+        return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
+    
 
-
+@app.get("/api/auth/workout/recommendation")
+async def get_workout_recommendation(token: str = Depends(OAuth2PasswordBearer(tokenUrl="api/auth/login"))):
+    try:
+        token_data = get_current_user(token)
+        get_user = (db.db.table("auth-users")
+                    .select("email")
+                    .eq("id", token_data.username)
+                    .execute())
+        if not get_user.data[0]:
+            return JSONResponse(content={"message": "User does not exist", "status": "error"}, status_code=400)
+        get_user_email = get_user.data[0]["email"]
+        
+        search_user = (db.db.table("user-profile")
+                          .select("*")
+                            .eq("email", get_user_email)
+                            .execute())
+        if not search_user.data[0]:
+            return JSONResponse(content={"message": "User profile does not exist", "status": "error"}, status_code=400)
+        user_data = search_user.data[0]
+        user_age = utility.calculate_age(user_data["date_of_birth"])
+        query = f'''
+        A few questions were asked to personalize your workout recommendation. Here are the details:
+        1. User Gender: {user_data["your_gender"]}
+        2. User Weight: {user_data["weight"]}
+        3. User Height: {user_data["height"]}
+        4. User Age: {user_age}
+        5. Primary Goal for Exercising: {user_data["primary_goal_for_exercising"]}
+        6. How often user exercised at past: {user_data["how_often_exercised_at_past"]}
+        7. Workout Intensity user prefers: {user_data["workout_intensity"]}
+        8. Workout Duration user prefers: {user_data["workout_duration"]}
+        9. Days a week user will workout: {user_data["what_days_a_week_you_will_workout"]}
+        10. Time of day user will prefer for workout: {user_data["what_time_of_day_you_will_workout"]}
+        
+        Based on the above details, give how many 
+        1. Bicep Curls should user do in a day?
+        2. Pushups should user do in a day?
+        3. Squats should user do in a day?
+        4. Crunches should user do in a day?
+        '''
+        response = await groq.ask(query)
+        return JSONResponse(content={"message": f"{str(response)}", "status": "success"}, status_code=200)
+    except Exception as e:
+        return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
