@@ -1,7 +1,11 @@
-import Image from "next/image";
-
+"use client"
+import LoginForm from "@/components/auth/LoginForm";
+import SignupForm from "@/components/auth/SignupForm";
+import { useState } from "react";
 const AuthLayout = ({ children }) => {
   const currentYear = new Date().getFullYear();
+  const [isLogin, setIsLogin] = useState(true);
+
   return (
     <>
       <div className="grid grid-cols-1 lg:grid-cols-2 h-screen">
@@ -26,7 +30,7 @@ const AuthLayout = ({ children }) => {
         </div>
         <div className="flex flex-col justify-center items-center h-screen">
           <div className="flex-grow flex w-full items-center justify-center px-10">
-            {children}
+            {isLogin ? <LoginForm /> : <SignupForm />}
           </div>
           <div className="flex flex-wrap justify-center items-center text-black/70 text-sm mb-3 font-semibold gap-3 text-center">
             <div>© {currentYear} Posture Perfect </div>
@@ -35,6 +39,12 @@ const AuthLayout = ({ children }) => {
               <div className="text-blue-500">Terms of Service</div>
             </div>
           </div>
+          <button
+            onClick={() => setIsLogin(!isLogin)}
+            className="mt-4 text-blue-500 underline"
+          >
+            {isLogin ? "Create an account" : "Already have an account? Login"}
+          </button>
         </div>
       </div>
     </>
