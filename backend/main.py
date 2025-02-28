@@ -31,7 +31,7 @@ mail_template = MAIL_TEMPLATE()
 groq = GROQ_SERVER()
 utility = Utils()
 
-origins = ["*"]
+origins = ["http://localhost:3001", "http://localhost:3000"]
 
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=True, allow_methods=["*"], allow_headers=["*"])
 
@@ -320,14 +320,14 @@ async def update_user_profile(user: UserUpdateProfile, token: str = Depends(OAut
                     .select("email")
                     .eq("id", token_data.username)
                     .execute())
-        if not get_user.data[0]:
+        if not get_user.data:
             return JSONResponse(content={"message": "User does not exist", "status": "error"}, status_code=400)
         get_user_email = get_user.data[0]["email"]
         profile_response = (db.db.table("user-profile")
                             .select("*")
                             .eq("email", get_user_email)
                             .execute())
-        if not profile_response.data[0]:
+        if not profile_response.data:
             return JSONResponse(content={"message": "User profile does not exist", "status": "error"}, status_code=400)
         user_data = user.model_dump()
         updated_data = { k: v for k, v in user_data.items() if v is not None }
@@ -335,7 +335,7 @@ async def update_user_profile(user: UserUpdateProfile, token: str = Depends(OAut
                         .update(updated_data)
                         .eq("email", get_user_email)
                         .execute())
-        if update_profile.data[0]:
+        if update_profile.data:
             return JSONResponse(content={"message": "User profile updated successfully", "data" : update_profile.data[0], "status": "success"}, status_code=200)
         else:
             return JSONResponse(content={"message": "Failed to update user profile", "status": "error"}, status_code=500)
