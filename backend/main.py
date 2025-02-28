@@ -178,6 +178,7 @@ async def personalize_user_profile(user: UserProfile, token: str = Depends(OAuth
             "what_time_of_day_you_will_workout": user.what_time_of_day_you_will_workout,
             "email": get_user_email
         }
+        points_schema = { "Pushups" : 0, "Squats" : 0, "Crunches" : 0, "Bicep Curls" : 0 }
         try:
             response = (db.db.table("user-profile")
                         .insert(user_data)
@@ -185,8 +186,8 @@ async def personalize_user_profile(user: UserProfile, token: str = Depends(OAuth
             leaderboard = (db.db.table("leaderboard")
                            .insert({"email": get_user_email,
                                     "username": get_username,
-                                    "total_points": 0, 
-                                    "today_points": 0, 
+                                    "total_points": points_schema, 
+                                    "today_points": points_schema, 
                                     "created_on": datetime.now().strftime("%Y-%m-%d"), 
                                     "last_updated": datetime.now().strftime("%Y-%m-%d")})
                            .execute())
@@ -280,7 +281,7 @@ async def get_user_profile(token: str = Depends(OAuth2PasswordBearer(tokenUrl="a
                            .eq("email", get_user_data["email"])
                            .execute())
         get_user_data["total_points"] = get_leaderboard.data and get_leaderboard.data[0]["total_points"]
-        get_user_data["today_points"] = get_leaderboard.data and get_leaderboard.data[0]["today_points"]
+        get_user_data["today_points"] = get_leaderboard.data and get_leaderboard.data[0]["today_points"]        
         return JSONResponse(content={"message": "User profile fetched successfully", "data": get_user_data, "status": "success"}, status_code=200)
     except Exception as e:
         return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
@@ -295,14 +296,14 @@ async def get_user_profile(token: str = Depends(OAuth2PasswordBearer(tokenUrl="a
                     .select("email")
                     .eq("id", token_data.username)
                     .execute())
-        if not get_user.data[0]:
+        if not get_user.data:
             return JSONResponse(content={"message": "User does not exist", "status": "error"}, status_code=400)
         get_user_email = get_user.data[0]["email"]
         profile_response = (db.db.table("user-profile")
                             .select("*")
                             .eq("email", get_user_email)
                             .execute())
-        if not profile_response.data[0]:
+        if not profile_response.data:
             return JSONResponse(content={"message": "User profile does not exist", "status": "error"}, status_code=400)
         user_profile = profile_response.data[0]
         return JSONResponse(content={"message": "User profile fetched successfully", "data": user_profile, "status": "success"}, status_code=200)
@@ -364,6 +365,7 @@ async def get_leaderboard(token: str = Depends(OAuth2PasswordBearer(tokenUrl="ap
     except Exception as e:
         return JSONResponse(content={"message": f"{str(e)}", "status": "error"}, status_code=500)
 
+
 @app.patch("/api/auth/leaderboard/update")
 async def update_leaderboard_entry(leaderboard: LeaderboardEntry, token: str = Depends(OAuth2PasswordBearer(tokenUrl="api/auth/login"))):
     try:
@@ -384,15 +386,21 @@ async def update_leaderboard_entry(leaderboard: LeaderboardEntry, token: str = D
         
         today = datetime.now().strftime("%Y-%m-%d")
         if get_current_leaderboard.data[0]["last_updated"] == today:
-            update_leaderboard = (db.db.table("leaderboard")
-                                  .update({"today_points": get_current_leaderboard.data[0]["today_points"] + leaderboard.score, "total_points": get_current_leaderboard.data[0]["total_points"] + leaderboard.score})
-                                  .eq("email", get_user_email)
-                                  .execute())
+            if leaderboard.exercise in get_current_leaderboard.data[0]["today_points"]:
+                get_current_leaderboard.data[0]["today_points"][leaderboard.exercise] += leaderboard.score
+                get_current_leaderboard.data[0]["total_points"][leaderboard.exercise] += leaderboard.score
+                update_leaderboard = (db.db.table("leaderboard")
+                                      .update({"today_points": get_current_leaderboard.data[0]["today_points"], "total_points": get_current_leaderboard.data[0]["total_points"]})
+                                      .eq("email", get_user_email)
+                                      .execute())
         else:
-            update_leaderboard = (db.db.table("leaderboard")
-                                  .update({"today_points": leaderboard.score, "total_points": get_current_leaderboard.data[0]["total_points"] + leaderboard.score, "last_updated": today})
-                                  .eq("email", get_user_email)
-                                  .execute())
+            if leaderboard.exercise in get_current_leaderboard.data[0]["today_points"]:
+                get_current_leaderboard.data[0]["today_points"][leaderboard.exercise] = leaderboard.score
+                get_current_leaderboard.data[0]["total_points"][leaderboard.exercise] += leaderboard.score
+                update_leaderboard = (db.db.table("leaderboard")
+                                      .update({"today_points": get_current_leaderboard.data[0]["today_points"], "total_points": get_current_leaderboard.data[0]["total_points"], "last_updated": today})
+                                      .eq("email", get_user_email)
+                                      .execute())
 
         if update_leaderboard.data and update_leaderboard.data[0]:
             return JSONResponse(content={"message": "Leaderboard updated successfully", "data" : update_leaderboard.data[0], "status": "success"}, status_code=200)

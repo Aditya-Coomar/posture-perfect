@@ -40,4 +40,5 @@ class UserUpdateProfile(BaseModel):
 
 class LeaderboardEntry(BaseModel):
     date: str = Field(..., example="2021-01-01")
+    exercise: str = Field(..., example="Pushups")
     score: int = Field(..., example=100)
