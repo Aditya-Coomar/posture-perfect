@@ -358,7 +358,7 @@ async def get_leaderboard(token: str = Depends(OAuth2PasswordBearer(tokenUrl="ap
                              .eq("last_updated", today)
                              .order("today_points")
                              .execute())
-        if overall_leaderboard.data and today_leaderboard.data:
+        if overall_leaderboard.data or today_leaderboard.data:
             return JSONResponse(content={"message": "Leaderboard fetched successfully", "data" : {"overall_leaderboard" : overall_leaderboard.data, "today_leaderboard" : today_leaderboard.data } , "status": "success"}, status_code=200)
         else:
             return JSONResponse(content={"message": "Failed to fetch leaderboard", "status": "error"}, status_code=500)
