@@ -414,9 +414,6 @@ const SignupForm = () => {
           </a>
         </motion.div>
       </form>
-
-      {/* Toast Container */}
-      <ToastContainer />
     </>
   );
 };
