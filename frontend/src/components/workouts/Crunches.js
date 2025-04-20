@@ -11,17 +11,37 @@ import {
   calculateAngle,
   crunchClassifier,
 } from "../../lib/landmarkUtils";
+import { toast } from "react-toastify";
+import Cookies from "js-cookie";
+import { getISTDate } from "@/functions/utils";
 
 export default function Crunches() {
   const [poseData, setPoseData] = useState([]);
   const [counter, setCounter] = useState(0);
   const [stage, setStage] = useState("down");
-  const [feedback, setFeedback] = useState("Start");
   const [currentAngle, setCurrentAngle] = useState(0);
-  const [percentage, setPercentage] = useState(0);
+  const [sets, setSets] = useState(0);
+  const [targetSets] = useState(1);
+  const [targetReps] = useState(4);
+  const [workoutComplete, setWorkoutComplete] = useState(false);
+  const [isDetecting, setIsDetecting] = useState(true);
 
-  const exerciseStateRef = useRef({
+  // Create a ref to handle animation frame
+  const animationFrameRef = useRef(null);
+
+  // Use ref to track state to avoid closure issues
+  const stateRef = useRef({
+    counter: 0,
+    sets: 0,
+    stage: "down",
     direction: 0, // 0 for down, 1 for up
+    repComplete: false,
+    consecutiveFramesInPosition: 0,
+    minFramesForDetection: 5,
+    lastDetectedAngle: 0,
+    // Crunches specific thresholds based on shoulder-hip-knee angle
+    angleThresholdUp: 114, // Angle for up position (smaller angle)
+    angleThresholdDown: 117, // Angle for down position (larger angle)
   });
 
   const webcamRef = useRef(null);
@@ -29,7 +49,94 @@ export default function Crunches() {
   const poseLandmarkerRef = useRef(null);
   const drawingUtilsRef = useRef(null);
 
+  // Keep stateRef in sync with React state
+  useEffect(() => {
+    stateRef.current.counter = counter;
+    stateRef.current.sets = sets;
+    stateRef.current.stage = stage;
+  }, [counter, sets, stage]);
+
+  const updateScore = async (workoutScore) => {
+    const myHeaders = new Headers();
+    myHeaders.append("Content-Type", "application/json");
+    myHeaders.append("Authorization", `Bearer ${Cookies.get("token")}`);
+
+    const raw = JSON.stringify({
+      date: getISTDate(),
+      score: workoutScore,
+      exercise: "Crunches",
+    });
+
+    const requestOptions = {
+      method: "PATCH",
+      headers: myHeaders,
+      body: raw,
+      redirect: "follow",
+    };
+
+    try {
+      const response = await fetch(
+        "https://bursting-shepherd-promoted.ngrok-free.app/api/auth/leaderboard/update",
+        requestOptions
+      );
+      const result = await response.json();
+      if (result.status === "success") {
+        toast.success("Score updated successfully!");
+      } else {
+        toast.error("Failed to update score.");
+      }
+    } catch (error) {
+      console.error("Error updating score:", error);
+      toast.error("Failed to update score.");
+    }
+  };
+
+  const completeWorkout = () => {
+    setWorkoutComplete(true);
+    setIsDetecting(false);
+    
+    const finalScore = Math.round(targetSets * 100);
+    console.log("Workout Complete!", {
+      exercise: "Crunches",
+      completedSets: targetSets,
+      totalReps: targetSets * targetReps,
+      score: finalScore,
+    });
+    
+    updateScore(finalScore);
+    
+    // Cancel animation frame when workout is complete
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = null;
+    }
+  };
+
+  const completeSet = () => {
+    const newSets = stateRef.current.sets + 1;
+    setSets(newSets);
+    stateRef.current.sets = newSets;
+    setCounter(0);
+    stateRef.current.counter = 0;
+
+    console.log(`Set ${newSets} completed! (${newSets}/${targetSets})`);
+    
+    if (newSets >= targetSets) {
+      setTimeout(() => completeWorkout(), 500);
+    } else {
+      // Reset for next set
+      setTimeout(() => {
+        setStage("down");
+        stateRef.current.stage = "down";
+        stateRef.current.direction = 0;
+        stateRef.current.repComplete = false;
+      }, 1000);
+    }
+  };
+
   const processExercise = (landmarks) => {
+    if (workoutComplete || !isDetecting) return;
+
     const shoulder = landmarks[POSE_LANDMARKS.RIGHT_SHOULDER];
     const hip = landmarks[POSE_LANDMARKS.RIGHT_HIP];
     const knee = landmarks[POSE_LANDMARKS.RIGHT_KNEE];
@@ -39,39 +146,54 @@ export default function Crunches() {
     const shoulderAngle = calculateAngle(knee, hip, shoulder);
     setCurrentAngle(Math.round(shoulderAngle));
 
-    // Calculate percentage using the same logic as Python code
-    // Map shoulder angle from (117, 114) to (100, 0)
-    const per = Math.round(((117 - shoulderAngle) / (117 - 114)) * 100);
+    const state = stateRef.current;
+    const isUpPosition = shoulderAngle <= state.angleThresholdUp;
+    const isDownPosition = shoulderAngle >= state.angleThresholdDown;
 
-    // Clamp percentage between 0 and 100
-    const clampedPer = Math.max(0, Math.min(100, per));
-    setPercentage(clampedPer);
-
-    const state = exerciseStateRef.current;
-
-    // Crunch counter logic matching Python implementation
-    if (clampedPer >= 95) {
-      // Using 95 instead of exact 100 for better detection
-      setFeedback("Up");
-      if (state.direction === 0) {
-        setCounter((prev) => prev + 0.5);
-        state.direction = 1;
-        setStage("up");
-      }
+    // Implement a more stable detection with consecutive frames
+    if (Math.abs(shoulderAngle - state.lastDetectedAngle) > 5) {
+      state.consecutiveFramesInPosition = 0;
+    } else {
+      state.consecutiveFramesInPosition++;
     }
 
-    if (clampedPer <= 5) {
-      // Using 5 instead of exact 0 for better detection
-      setFeedback("Down");
-      if (state.direction === 1) {
-        setCounter((prev) => prev + 0.5);
+    state.lastDetectedAngle = shoulderAngle;
+
+    // Only process state changes when we have enough consistent frames
+    if (state.consecutiveFramesInPosition >= state.minFramesForDetection) {
+      // Handle up position (crunch)
+      if (isUpPosition && state.direction === 0 && !state.repComplete) {
+        state.direction = 1;
+        state.repComplete = true;
+        setStage("up");
+        state.stage = "up";
+        
+        // Increment counter for up position
+        const newCounter = state.counter + 1;
+        setCounter(newCounter);
+        state.counter = newCounter;
+        console.log(`Rep ${newCounter} completed (${newCounter}/${targetReps})`);
+        
+        // Check if we've completed all reps for this set
+        if (newCounter >= targetReps) {
+          completeSet();
+        }
+      } 
+      // Handle down position - reset for next rep
+      else if (isDownPosition && state.direction === 1) {
         state.direction = 0;
+        state.repComplete = false;
         setStage("down");
+        state.stage = "down";
       }
     }
   };
 
   const startCapture = async () => {
+    if (!isDetecting) {
+      return;
+    }
+    
     if (
       webcamRef.current &&
       poseLandmarkerRef.current &&
@@ -93,7 +215,8 @@ export default function Crunches() {
         }
       }
     }
-    requestAnimationFrame(startCapture);
+    // Store reference to the animation frame so we can cancel it later
+    animationFrameRef.current = requestAnimationFrame(startCapture);
   };
 
   useEffect(() => {
@@ -125,12 +248,10 @@ export default function Crunches() {
     initializePoseLandmarker();
 
     return () => {
-      exerciseStateRef.current = {
-        isUp: false,
-        isDown: true,
-        direction: 0,
-        repInProgress: false,
-      };
+      // Cleanup animation frame on component unmount
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
     };
   }, []);
 
@@ -147,61 +268,98 @@ export default function Crunches() {
       ctx.clearRect(0, 0, 1280, 720);
 
       poseData.forEach((landmarks) => {
-        // Draw landmarks and connections
-        landmarks.forEach((point) => {
-          drawingUtilsRef.current.drawLandmarks([point], {
-            color: "#FF0000",
-            radius: 5,
-            lineWidth: 2,
-          });
-        });
-
-        if (PoseLandmarker.POSE_CONNECTIONS) {
-          drawingUtilsRef.current.drawConnectors(
-            landmarks,
-            PoseLandmarker.POSE_CONNECTIONS,
-            {
-              color: "#00FF00",
+        // Only draw landmarks if detection is active
+        if (isDetecting) {
+          landmarks.forEach((point) => {
+            drawingUtilsRef.current.drawLandmarks([point], {
+              color: "#FF0000",
+              radius: 5,
               lineWidth: 2,
-            }
-          );
-        }
+            });
+          });
 
-        ctx.save();
-        ctx.scale(-1, 1);
-        ctx.translate(-1280, 0);
+          if (PoseLandmarker.POSE_CONNECTIONS) {
+            drawingUtilsRef.current.drawConnectors(
+              landmarks,
+              PoseLandmarker.POSE_CONNECTIONS,
+              {
+                color: "#00FF00",
+                lineWidth: 2,
+              }
+            );
+          }
 
-        // Draw angle at hip position (matching Python visualization)
-        const hip = landmarks[POSE_LANDMARKS.RIGHT_HIP];
-        if (hip) {
-          const x = hip.x * 1280;
-          const y = hip.y * 720;
-          ctx.font = "24px Arial";
+          ctx.save();
+          ctx.scale(-1, 1);
+          ctx.translate(-1280, 0);
+
+          // Draw angle at hip position
+          const hip = landmarks[POSE_LANDMARKS.RIGHT_HIP];
+          if (hip) {
+            const x = (1 - hip.x) * 1280;
+            const y = hip.y * 720;
+            ctx.font = "24px Arial";
+            ctx.fillStyle = "white";
+            ctx.strokeStyle = "black";
+            ctx.lineWidth = 2;
+            ctx.strokeText(`${currentAngle}°`, x, y);
+            ctx.fillText(`${currentAngle}°`, x, y);
+          }
+
+          // Draw counter box with blue background (matching crunches style)
+          ctx.fillStyle = "rgba(0, 0, 255, 0.7)";
+          ctx.fillRect(0, 0, 225, 73);
+
+          // Draw rep counter
+          ctx.font = "16px Arial";
+          ctx.fillStyle = "black";
+          ctx.fillText("REPS", 15, 25);
+
+          ctx.font = "48px Arial";
           ctx.fillStyle = "white";
-          ctx.strokeStyle = "black";
-          ctx.lineWidth = 2;
-          ctx.strokeText(`${currentAngle}°`, x, y);
-          ctx.fillText(`${currentAngle}°`, x, y);
+          ctx.fillText(counter.toString(), 15, 65);
+
+          // Draw stage
+          ctx.font = "16px Arial";
+          ctx.fillStyle = "black";
+          ctx.fillText("STAGE", 120, 25);
+
+          ctx.font = "48px Arial";
+          ctx.fillStyle = "white";
+          ctx.fillText(stage, 120, 65);
+
+          ctx.restore();
         }
-
-        // Draw counter box (matching Python style)
-        ctx.fillStyle = "rgba(0, 0, 255, 0.7)";
-        ctx.fillRect(0, 380, 130, 100);
-
-        // Draw counter
-        ctx.font = "48px Arial";
-        ctx.fillStyle = "white";
-        ctx.fillText(Math.floor(counter).toString(), 25, 455);
-
-        // Draw feedback
-        ctx.font = "30px Arial";
-        ctx.fillStyle = "white";
-        ctx.fillText(feedback, 750, 450);
-
-        ctx.restore();
       });
     }
-  }, [poseData, counter, stage, feedback, currentAngle, percentage]);
+  }, [poseData, counter, stage, currentAngle, isDetecting]);
+
+  const resetWorkout = () => {
+    setWorkoutComplete(false);
+    setIsDetecting(true);
+    setCounter(0);
+    setSets(0);
+    setStage("down");
+    
+    // Reset all state tracking
+    stateRef.current = {
+      counter: 0,
+      sets: 0,
+      stage: "down",
+      direction: 0,
+      repComplete: false,
+      consecutiveFramesInPosition: 0,
+      minFramesForDetection: 5,
+      lastDetectedAngle: 0,
+      angleThresholdUp: 114,
+      angleThresholdDown: 117,
+    };
+    
+    // Restart the capture if not running
+    if (!animationFrameRef.current) {
+      startCapture();
+    }
+  };
 
   return (
     <div className="relative w-full pt-[56.25%]">
@@ -226,6 +384,40 @@ export default function Crunches() {
         style={{ transform: "rotateY(180deg)" }}
         className="absolute top-0 left-0 w-full h-full"
       />
+      {/* Add workout status overlay */}
+      <div className="absolute top-4 right-4 bg-black bg-opacity-70 p-4 rounded-lg text-white">
+        <h3 className="text-xl font-bold mb-2">Workout Progress</h3>
+        <p>
+          Set: {sets + 1}/{targetSets}
+        </p>
+        <p>
+          Reps: {counter}/{targetReps}
+        </p>
+        {workoutComplete && (
+          <button 
+            onClick={resetWorkout}
+            className="mt-4 bg-green-500 hover:bg-green-600 text-white py-2 px-4 rounded"
+          >
+            Start New Workout
+          </button>
+        )}
+      </div>
+      {/* Add workout complete message */}
+      {workoutComplete && (
+        <div
+          className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 
+                        bg-green-500 text-white p-6 rounded-lg text-center"
+        >
+          <h2 className="text-2xl font-bold mb-2">Workout Complete! 🎉</h2>
+          <p>Great job completing all {targetSets} sets!</p>
+          <button 
+            onClick={resetWorkout}
+            className="mt-4 bg-white text-green-500 py-2 px-4 rounded hover:bg-gray-100"
+          >
+            Start New Workout
+          </button>
+        </div>
+      )}
     </div>
   );
 }
