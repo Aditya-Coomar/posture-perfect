@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Cookies from "js-cookie";
 import { toast, ToastContainer } from "react-toastify";
@@ -22,6 +22,52 @@ export default function PersonalizeExperiencePage() {
   });
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [userProfileExists, setUserProfileExists] = useState(false);
+
+  useEffect(() => {
+    const fetchUserProfile = async () => {
+      const myHeaders = new Headers();
+      myHeaders.append("Authorization", `Bearer ${Cookies.get("token")}`);
+      myHeaders.append("ngrok-skip-browser-warning", "790355");
+
+      const requestOptions = {
+        method: "GET",
+        headers: myHeaders,
+        redirect: "follow",
+      };
+
+      try {
+        const response = await fetch(
+          "https://bursting-shepherd-promoted.ngrok-free.app/api/auth/user/workout/profile",
+          requestOptions
+        );
+        const result = await response.json();
+        if (result.status === "success") {
+          setUserProfileExists(true);
+          setFormData({
+            your_gender: result.data.your_gender,
+            weight: result.data.weight,
+            height: result.data.height,
+            date_of_birth: result.data.date_of_birth,
+            primary_goal_for_exercising:
+              result.data.primary_goal_for_exercising,
+            how_often_exercised_at_past:
+              result.data.how_often_exercised_at_past,
+            workout_intensity: result.data.workout_intensity,
+            workout_duration: result.data.workout_duration,
+            what_time_of_day_you_will_workout:
+              result.data.what_time_of_day_you_will_workout,
+            what_days_a_week_you_will_workout:
+              result.data.what_days_a_week_you_will_workout.split(", "),
+          });
+        }
+      } catch (error) {
+        console.error(error);
+      }
+    };
+
+    fetchUserProfile();
+  }, []);
 
   // Handle form field changes
   const handleChange = (e) => {
@@ -89,7 +135,7 @@ export default function PersonalizeExperiencePage() {
 
     console.log(raw);
     const requestOptions = {
-      method: "POST",
+      method: userProfileExists ? "PATCH" : "POST",
       headers: myHeaders,
       body: raw,
       redirect: "follow",
@@ -97,7 +143,9 @@ export default function PersonalizeExperiencePage() {
 
     try {
       const response = await fetch(
-        "https://bursting-shepherd-promoted.ngrok-free.app/api/auth/personalize",
+        userProfileExists
+          ? " https://bursting-shepherd-promoted.ngrok-free.app/api/auth/profile/update"
+          : "https://bursting-shepherd-promoted.ngrok-free.app/api/auth/personalize",
         requestOptions
       );
 
@@ -106,26 +154,34 @@ export default function PersonalizeExperiencePage() {
       }
 
       const result = await response.json();
-      console.log(result);
-
-      // Show success toast
-      toast.success("Experience personalized successfully!", {
-        position: "top-right",
-        autoClose: 3000,
-        hideProgressBar: false,
-        closeOnClick: true,
-        pauseOnHover: true,
-        draggable: true,
-        progress: undefined,
-      });
+      if (result.status == "success") {
+        // Show success toast
+        toast.success(result.message, {
+          position: "top-right",
+          autoClose: 3000,
+          hideProgressBar: false,
+          closeOnClick: true,
+          pauseOnHover: true,
+          draggable: true,
+          progress: undefined,
+        });
+      } else {
+        toast.error(result.message, {
+          position: "top-right",
+          autoClose: 3000,
+          hideProgressBar: false,
+          closeOnClick: true,
+          pauseOnHover: true,
+          draggable: true,
+          progress: undefined,
+        });
+      }
 
       // Redirect to home page after 3 seconds
       setTimeout(() => {
         router.push("/home");
       }, 3000);
     } catch (error) {
-      console.error(error);
-
       // Show error toast
       toast.error(error.message || "An error occurred. Please try again.", {
         position: "top-right",
